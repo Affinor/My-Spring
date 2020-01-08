@@ -1,0 +1,26 @@
+# Project exclude paths
+/*/target/*
+*.class
+*.lock
+*.DS_Store
+*.swp
+*.out
+target/
+*.iml
+*.ipr
+*.iws
+*.bak
+.settings/
+.classpath
+.project
+.metadata/
+.idea/
+*.log
+*.lnk
+.exe
+*.tar.gz
+.prefs
+Thumbs.db
+.project
+.idea
+.eclipse/
