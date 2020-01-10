@@ -6,7 +6,7 @@ import com.jin.demo.myspring.annotation.MyController;
 @MyController
 public class TransferController {
     @MyAutowired
-    private TransferService transferService;
+    private ITransferService transferService;
     public String transfer(Bank userOut,Bank userIn){
         return transferService.transfer(userOut,userIn);
     }

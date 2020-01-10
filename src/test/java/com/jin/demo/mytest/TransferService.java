@@ -5,11 +5,12 @@ import com.jin.demo.myspring.annotation.MyService;
 import com.jin.demo.myspring.annotation.MyTransactional;
 
 @MyService
-public class TransferService {
+public class TransferService implements ITransferService{
 
     @MyAutowired
     private TransferDao transferDao;
 
+    @Override
     @MyTransactional
     public String transfer(Bank userOut,Bank userIn){
         transferDao.transferOut(userOut);

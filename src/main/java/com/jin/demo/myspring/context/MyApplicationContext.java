@@ -1,9 +1,6 @@
 package com.jin.demo.myspring.context;
 
-import com.jin.demo.myspring.annotation.MyAutowired;
-import com.jin.demo.myspring.annotation.MyController;
-import com.jin.demo.myspring.annotation.MyRepository;
-import com.jin.demo.myspring.annotation.MyService;
+import com.jin.demo.myspring.annotation.*;
 import com.jin.demo.myspring.aop.MyAdvisedSupport;
 import com.jin.demo.myspring.aop.MyAopProxy;
 import com.jin.demo.myspring.aop.MyCglibAopProxy;
@@ -17,11 +14,9 @@ import com.jin.demo.myspring.beans.config.MyBeanPostProcessor;
 import com.jin.demo.myspring.core.MyBeanFactory;
 
 import java.lang.reflect.Field;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 /**IOC容器，核心实现
  * @author wangjin
@@ -48,6 +43,8 @@ public class MyApplicationContext extends MyDefaultListableBeanFactory implement
      * 刚实例化的bean===>>>三级缓存
      */
     private Map<String, MyBeanWrapper> factoryBeanIntiCache = new ConcurrentHashMap<String, MyBeanWrapper>();
+
+    private Map<String,Class<?>> factoryBeanInterfaceCache = new ConcurrentHashMap<>();
 
     public MyApplicationContext(String... configLoactions){
         this.configLoactions = configLoactions;
@@ -177,22 +174,44 @@ public class MyApplicationContext extends MyDefaultListableBeanFactory implement
                 autowiredBeanName = field.getType().getName();
             }
             field.setAccessible(true);
-            MyBeanWrapper fieldBeanWrapper = this.factoryBeanInstanceCache.get(autowiredBeanName);
-            //AOP的实现
-            MyAdvisedSupport config = instantionAopConfig();
-            config.setTargetClass(fieldBeanWrapper.getWrappedInstance().getClass());
-            config.setTarget(fieldBeanWrapper.getWrappedInstance());
-            Object proxy = null;
-            //符合PointCut的规则的话，创建代理对象
-            if(config.pointCutMatch()) {
-                proxy = createProxy(config).getProxy();
+            //如果是接口，就找他的实现类的实例
+            if (field.getType().isInterface()){
+                //先找到接口的实现类的实例
+                MyBeanWrapper value = getSubInstanc(this.factoryBeanInstanceCache,field.getType());
+                //AOP的实现
+                MyAdvisedSupport iconfig = instantionAopConfig();
+                iconfig.setTargetClass(value.getWrappedInstance().getClass());
+                iconfig.setTarget(value.getWrappedInstance());
+                Object iproxy = null;
+                //符合PointCut的规则的话，创建代理对象
+                if(iconfig.pointCutMatch()) {
+                    iproxy = createProxy(iconfig).getProxy();
+                }
+                //如果没有代理对象，就用当前实例，否则直接用代理对象
+                if (null!=iproxy){
+                    value.setProxy(iproxy);
+                    //value.setWrappedInstance(iproxy);
+                }
+                field.set(instance,value.getProxy()==null?value.getWrappedInstance():value.getProxy());
+            }else {
+                //否则直接从二级缓存中找
+                MyBeanWrapper fieldBeanWrapper = this.factoryBeanInstanceCache.get(autowiredBeanName);
+                //AOP的实现
+                MyAdvisedSupport config = instantionAopConfig();
+                config.setTargetClass(fieldBeanWrapper.getWrappedClass());
+                config.setTarget(fieldBeanWrapper.getWrappedInstance());
+                Object proxy = null;
+                //符合PointCut的规则的话，创建代理对象
+                if (config.pointCutMatch()) {
+                    proxy = createProxy(config).getProxy();
+                }
+                //如果没有代理对象，就用当前实例，否则直接用代理对象
+                if (null != proxy) {
+                    fieldBeanWrapper.setProxy(proxy);
+                    //fieldBeanWrapper.setWrappedInstance(proxy);
+                }
+                field.set(instance, fieldBeanWrapper.getProxy()==null?fieldBeanWrapper.getWrappedInstance():fieldBeanWrapper.getProxy());
             }
-            //如果没有代理对象，就用当前实例，否则直接用代理对象
-            if (null!=proxy){
-                fieldBeanWrapper.setProxy(proxy);
-                fieldBeanWrapper.setWrappedInstance(proxy);
-            }
-            field.set(instance,fieldBeanWrapper.getWrappedInstance());
         }
         myBeanWrapper.setStatus("3");
         //为了即可以通过beanName取值，又可以通过全类名取值，还可以通过自定义的beanID取值
@@ -201,6 +220,7 @@ public class MyApplicationContext extends MyDefaultListableBeanFactory implement
         super.getBeanNameByType(beanName).forEach(name->{
             this.factoryBeanObjectCache.put(name,myBeanWrapper);//名称
         });
+        //TODO 如果当前类，有实现接口，还要通过接口的id注入一次
         //SimpleName的首字母小写，如：com.jin.demo.TransferService ===>>> transferService
         /*char[] chars = myBeanWrapper.getWrappedInstance().getClass().getSimpleName().toCharArray();
         chars[0] += 32;
@@ -230,10 +250,33 @@ public class MyApplicationContext extends MyDefaultListableBeanFactory implement
             }
             //强制访问
             field.setAccessible(true);
-            field.set(instance,this.factoryBeanIntiCache.get(autowiredBeanName).getWrappedInstance());
+            //如果是接口，就找他的实现类的实例
+            if (field.getType().isInterface()){
+                //先找到接口的实现类的实例
+                MyBeanWrapper value = getSubInstanc(this.factoryBeanIntiCache,field.getType());
+                //然后赋值
+                field.set(instance,value.getWrappedInstance());
+            }else {
+                //否则直接从三级缓存中找
+                field.set(instance, this.factoryBeanIntiCache.get(autowiredBeanName).getWrappedInstance());
+            }
         }
         myBeanWrapper.setStatus("2");
         this.factoryBeanInstanceCache.put(beanName,myBeanWrapper);
+    }
+
+    /**
+     * 找到当前接口的子类的MyBeanWrapper，默认取第一个
+     * @param factoryBeanIntiCache
+     * @param aClass
+     * @return
+     */
+    private MyBeanWrapper getSubInstanc(Map<String, MyBeanWrapper> factoryBeanIntiCache, Class<?> aClass) {
+        return factoryBeanIntiCache.values()
+                .stream()
+                .filter(v -> aClass.isAssignableFrom(v.getWrappedClass()))
+                .findFirst()
+                .get();
     }
 
     /**
@@ -265,7 +308,14 @@ public class MyApplicationContext extends MyDefaultListableBeanFactory implement
         String className = myBeanDefinition.getBeanClassName();
         //2、反射实例化，得到一个对象
         Class<?> clazz = Class.forName(className);
-        if (clazz.isAnnotationPresent(MyController.class)||clazz.isAnnotationPresent(MyService.class)||clazz.isAnnotationPresent(MyRepository.class)){
+        if (clazz.isAnnotationPresent(MyController.class)||clazz.isAnnotationPresent(MyService.class)
+                ||clazz.isAnnotationPresent(MyRepository.class)||clazz.isAnnotationPresent(MyComponent.class)){
+            //如果是接口，先不作实例化
+            if (clazz.isInterface()){
+                this.factoryBeanInterfaceCache.put(className,clazz);
+                return;
+            }
+            //如果是类，直接实例化
             Object instance = clazz.newInstance();
             //此时bean才刚刚实例化完成
             MyBeanWrapper myBeanWrapper = new MyBeanWrapper(instance,null);
